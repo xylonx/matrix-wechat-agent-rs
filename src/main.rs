@@ -1,11 +1,11 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{http::Request, Message},
+    tungstenite::{handshake, http::Request, Message},
 };
 
 use futures_util::{future, pin_mut};
-use log::{error, info};
+use log::{error, info, trace};
 use matrix_wechat_agent::{
     manager::{self, WechatManager},
     ws::recv::WebsocketMatrixRequest,
@@ -30,14 +30,23 @@ async fn main() {
 
     let arg = Args::parse();
 
+    let url = url::Url::parse(&arg.addr).unwrap();
+    info!("parse url {} successfully", arg.addr);
+
     let request = Request::builder()
+        .method("GET")
+        .header("Host", url.host_str().unwrap())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", handshake::client::generate_key())
         .header("Authorization", format!("Basic {}", arg.token))
-        .uri(arg.addr.clone())
+        .uri(url.as_str())
         .body(())
         .unwrap();
-    info!("construct request with addr[{}] successfully", arg.addr);
+    info!("construct wss request successfully");
 
-    let (tx, mut rx) = mpsc::channel::<String>(10);
+    let (tx, mut rx) = mpsc::channel::<String>(1);
 
     let manager: WechatManager = manager::WechatManager::new(arg.port, "".to_string(), tx);
 
@@ -48,6 +57,7 @@ async fn main() {
 
     let write_message = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
+            trace!("write matrix command resp to ws: {}", msg);
             if let Err(err) = writer.send(Message::Text(msg)).await {
                 error!("write message to ws failed: {}", err);
             };
@@ -95,6 +105,9 @@ async fn recv_message(
             return;
         }
     };
+
+    trace!("recv ws command: {}", s);
+
     let msg = match serde_json::from_str::<WebsocketMatrixRequest>(s.as_str()) {
         Ok(msg) => {
             info!("parse recv message as json successfully");
