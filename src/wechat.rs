@@ -1,8 +1,9 @@
 use anyhow::bail;
 use bytes::Bytes;
+use serde_repr::Deserialize_repr;
 
-use chrono::{DateTime, Utc};
-use std::{os::raw::c_int, path::Path, time::Duration, vec};
+use chrono::{serde::ts_seconds, DateTime, Utc};
+use std::{collections::HashMap, os::raw::c_int, path::Path, time::Duration, vec};
 use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus, System, SystemExt};
 
 use log::{error, info};
@@ -40,35 +41,35 @@ impl Clone for WechatInstance {
     }
 }
 
-impl Drop for WechatInstance {
-    fn drop(&mut self) {
-        match self.is_alive() {
-            Ok(alive) => {
-                if !alive {
-                    info!("process[{}] is already dead", self.pid);
-                    return;
-                }
-            }
-            Err(err) => {
-                error!("check process status failed: {}", err);
-            }
-        }
-
-        if let Err(err) = self.stop_listening() {
-            error!("stop_listen failed: {}", err);
-        };
-
-        match self.kill_self_process() {
-            Ok(status) => match status {
-                true => info!("kill process[{}] successfully", self.pid),
-                false => error!("kill process[{}] failed", self.pid),
-            },
-            Err(err) => {
-                error!("kill process[{}] failed: {}", self.pid, err);
-            }
-        }
-    }
-}
+// impl Drop for WechatInstance {
+//     fn drop(&mut self) {
+//         match self.is_alive() {
+//             Ok(alive) => {
+//                 if !alive {
+//                     info!("process[{}] is already dead", self.pid);
+//                     return;
+//                 }
+//             }
+//             Err(err) => {
+//                 error!("check process status failed: {}", err);
+//             }
+//         }
+//
+//         if let Err(err) = self.stop_listening() {
+//             error!("stop_listen failed: {}", err);
+//         };
+//
+//         match self.kill_self_process() {
+//             Ok(status) => match status {
+//                 true => info!("kill process[{}] successfully", self.pid),
+//                 false => error!("kill process[{}] failed", self.pid),
+//             },
+//             Err(err) => {
+//                 error!("kill process[{}] failed: {}", self.pid, err);
+//             }
+//         }
+//     }
+// }
 
 #[derive(Serialize)]
 struct WechatNilBodyReq {}
@@ -83,6 +84,12 @@ struct WechatJsonSQLReq {
 struct WechatErrorResp {
     pub msg: String,
     pub result: String,
+}
+
+#[derive(Deserialize)]
+struct WechatHookResp {
+    pub _msg: u32,
+    pub _result: String,
 }
 
 #[derive(Serialize)]
@@ -130,10 +137,16 @@ impl WechatInstance {
                 bail!("start listen failed with return value: {}", ok)
             }
 
+            info!(
+                "new wechat instance and start listen it at {} successfully. pid = {}",
+                port, pid
+            );
+
             Ok(pid)
         }
     }
 
+    #[allow(dead_code)]
     fn stop_listening(&self) -> anyhow::Result<bool> {
         unsafe {
             let driver_lib_path = String::from("wxDriver64.dll");
@@ -180,23 +193,35 @@ impl WechatInstance {
 
 impl WechatInstance {
     pub async fn hook_wechat_message(&self, save_path: String) -> anyhow::Result<()> {
-        self.wechat_hook_post(
+        self.wechat_hook_post::<serde_json::Value, HashMap<String, serde_json::Value>>(
             constants::WECHAT_MSG_START_HOOK,
             serde_json::json!({"port": self.message_hook_port}),
         )
         .await?;
+        info!(
+            "hook instance[pid={}] message to port {} successfully",
+            self.pid, self.message_hook_port
+        );
 
-        self.wechat_hook_post(
+        self.wechat_hook_post::<serde_json::Value, HashMap<String, serde_json::Value>>(
             constants::WECHAT_MSG_START_IMAGE_HOOK,
             serde_json::json!({ "save_path": save_path }),
         )
         .await?;
+        info!(
+            "hook instance[pid={}] image to path {} successfully",
+            self.pid, save_path
+        );
 
-        self.wechat_hook_post(
+        self.wechat_hook_post::<serde_json::Value, HashMap<String, serde_json::Value>>(
             constants::WECHAT_MSG_START_VOICE_HOOK,
             serde_json::json!({ "save_path": save_path }),
         )
         .await?;
+        info!(
+            "hook instance[pid={}] voice to path {} successfully",
+            self.pid, save_path
+        );
 
         Ok(())
     }
@@ -334,7 +359,7 @@ impl WechatInstance {
             false => self.get_micro_msg_contacts(Some(wechat_id)).await?,
         };
 
-        Ok(contacts[1].clone())
+        Ok(contacts[0].clone())
     }
 }
 
@@ -354,6 +379,8 @@ impl WechatInstance {
             error!("parse is_login resp failed: {}", resp.result);
             bail!("parse is_login resp failed: {}", resp.result)
         }
+
+        info!("log status: {}", resp.is_login);
 
         Ok(resp.is_login == 1)
     }
@@ -408,7 +435,7 @@ impl WechatInstance {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde_with::serde_as]
 pub struct WechatUserInfo {
     #[serde(rename = "wxId")]
@@ -418,7 +445,7 @@ pub struct WechatUserInfo {
     #[serde(rename = "wxBigAvatar")]
     pub avatar: String,
     #[serde(rename = "wxRemark")]
-    pub remark: String,
+    pub remark: Option<String>,
 }
 
 impl From<ContactInfo> for WechatUserInfo {
@@ -427,7 +454,7 @@ impl From<ContactInfo> for WechatUserInfo {
             id: contact.username,
             nickname: contact.nickname,
             avatar: contact.avatar_url,
-            remark: contact.remark,
+            remark: Some(contact.remark),
         }
     }
 }
@@ -471,7 +498,7 @@ impl WechatInstance {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde_with::serde_as]
 pub struct WechatGroupInfo {
     #[serde(rename(serialize = "wxId"))]
@@ -583,7 +610,15 @@ impl WechatInstance {
                 target,
                 content,
                 message_type: MatrixMessageType::Text,
-                data: MatrixMessageDataField::Mentions(mentions),
+                data: None,
+                ..
+            } => self.send_text(target, content).await?,
+
+            MatrixRequestDataMessage {
+                target,
+                content,
+                message_type: MatrixMessageType::Text,
+                data: Some(MatrixMessageDataField::Mentions(mentions)),
                 ..
             } => {
                 if mentions.len() == 0 {
@@ -596,13 +631,13 @@ impl WechatInstance {
             MatrixRequestDataMessage {
                 target,
                 message_type: MatrixMessageType::Image,
-                data: MatrixMessageDataField::Blob(blob),
+                data: Some(MatrixMessageDataField::Blob(blob)),
                 ..
             }
             | MatrixRequestDataMessage {
                 target,
                 message_type: MatrixMessageType::Video,
-                data: MatrixMessageDataField::Blob(blob),
+                data: Some(MatrixMessageDataField::Blob(blob)),
                 ..
             } => {
                 let path = self.save_blob(blob).await?;
@@ -612,7 +647,7 @@ impl WechatInstance {
             MatrixRequestDataMessage {
                 target,
                 message_type: MatrixMessageType::File,
-                data: MatrixMessageDataField::Blob(blob),
+                data: Some(MatrixMessageDataField::Blob(blob)),
                 ..
             } => {
                 let path = self.save_blob(blob).await?;
@@ -688,13 +723,13 @@ impl WechatInstance {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde_with::serde_as]
 pub struct WechatMessage {
     pub pid: u32,
     #[serde(rename = "msgid")]
     pub message_id: u64,
-    #[serde_as(as = "TimestampMilliSeconds<i64, Flexible>")]
+    #[serde(with = "ts_seconds")]
     pub timestamp: DateTime<Utc>,
     // #[serde_as(as = "TimestampMilliSeconds<String, Flexible>")]
     // pub time: DateTime<Utc>,
@@ -706,7 +741,7 @@ pub struct WechatMessage {
     #[serde(rename = "isSendMsg")]
     pub is_send_message: i8,
     #[serde(rename = "isSendByPhone")]
-    pub is_send_by_phone: i8,
+    pub is_send_by_phone: Option<i8>,
     #[serde(rename = "type")]
     pub msg_type: WechatMessageType,
     pub message: String,
@@ -718,7 +753,8 @@ pub struct WechatMessage {
     pub extra_info: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize_repr, Debug)]
+#[repr(u32)]
 pub enum WechatMessageType {
     Unknown = 0,
     Text = 1,

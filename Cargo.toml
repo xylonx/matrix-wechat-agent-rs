@@ -15,7 +15,7 @@ libloading = "0.7"
 serde = { version = "1.0.151", features = ["derive"] }
 log = "0.4.17"
 env_logger = "0.10.0"
-tokio-tungstenite = "0.18.0"
+tokio-tungstenite = { version = "0.18.0", features = ["native-tls"] }
 url = "2.3.1"
 futures-util = "0.3.25"
 futures-channel = "0.3.25"
@@ -28,3 +28,4 @@ sysinfo = "0.27.2"
 quick-xml = { version = "0.27.1", features = ["serde", "serialize"] }
 rust-crypto = "0.2.36"
 clap = { version = "4.0.32", features = ["derive"] }
+serde_repr = "0.1.10"
