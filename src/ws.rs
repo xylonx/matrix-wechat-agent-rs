@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 pub mod recv;
 pub mod send;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde_with::serde_as]
 pub enum CommandType {
     #[serde(rename = "connect")]
     Connect,
     #[serde(rename = "disconnect")]
     Disconnect,
-    #[serde(rename = "log_qr")]
+    #[serde(rename = "login_qr")]
     LoginWithQRCode,
     #[serde(rename = "is_login")]
     IsLogin,
@@ -40,7 +40,7 @@ pub enum CommandType {
     WebsocketClosed,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde_with::serde_as]
 #[serde(untagged)]
 pub enum MatrixMessageDataField {
@@ -55,14 +55,14 @@ pub enum MatrixMessageDataField {
     Link(MatrixMessageDataLink),
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde_with::serde_as]
 pub struct MatrixMessageDataBlob {
     pub name: String,
     #[serde_as(as = "Bytes")]
     pub binary: Vec<u8>,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde_with::serde_as]
 pub struct MatrixMessageDataLink {
     pub title: String,
