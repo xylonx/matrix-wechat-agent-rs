@@ -24,7 +24,7 @@ impl<T: Serialize> WebsocketMessage<T> {
 }
 
 #[serde_with::serde_as]
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub struct WebsocketCommand<T: Serialize> {
     pub mxid: String,
     #[serde(rename = "req")]

@@ -2,24 +2,24 @@ use serde::Deserialize;
 
 use super::{CommandType, MatrixMessageDataField};
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 #[serde_with::serde_as]
 pub struct WebsocketMatrixRequest {
     pub mxid: String,
     #[serde(rename(deserialize = "req"))]
     pub req_id: i32,
     pub command: CommandType,
-    pub data: MatrixRequestDataField,
+    pub data: Option<MatrixRequestDataField>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 #[serde(untagged)]
 pub enum MatrixRequestDataField {
     Query(MatrixRequestDataQuery),
     Message(MatrixRequestDataMessage),
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct MatrixRequestDataQuery {
     #[serde(rename(deserialize = "wxId"))]
     pub wechat_id: String,
@@ -27,16 +27,16 @@ pub struct MatrixRequestDataQuery {
     pub group_id: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct MatrixRequestDataMessage {
     pub target: String,
     #[serde(rename(deserialize = "type"))]
     pub message_type: MatrixMessageType,
     pub content: String,
-    pub data: MatrixMessageDataField,
+    pub data: Option<MatrixMessageDataField>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde_with::serde_as]
 pub enum MatrixMessageType {
     #[serde(rename = "m.text")]
