@@ -1,8 +1,10 @@
 use crate::wechat::WechatInstance;
 use crate::ws::send::{WebsocketCommand, WebsocketMessage};
 use anyhow::bail;
+use log::trace;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -146,20 +148,20 @@ impl WechatManager {
         self.write_to_ws(event).await
     }
 
-    async fn write_command_resp<T: Serialize>(
+    async fn write_command_resp<T: Serialize + Debug>(
         &self,
         mxid: String,
         req_id: i32,
         data: Option<T>,
     ) -> anyhow::Result<()> {
-        let resp = self
-            .write_to_ws(WebsocketMessage::Command(WebsocketCommand {
-                mxid: mxid.clone(),
-                req_id,
-                command: CommandType::Response,
-                data,
-            }))
-            .await;
+        let cmd = WebsocketCommand {
+            mxid: mxid.clone(),
+            req_id,
+            command: CommandType::Response,
+            data,
+        };
+        trace!("write command to ws channel: {:?}", cmd);
+        let resp = self.write_to_ws(WebsocketMessage::Command(cmd)).await;
         if let Err(e) = resp {
             self.write_command_error(mxid, req_id, e.to_string())
                 .await?
