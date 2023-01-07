@@ -1,6 +1,6 @@
 [package]
 name = "matrix_wechat_agent"
-version = "0.1.0"
+version = "0.1.1"
 repository = "github.com/xylonx/matrix-wechat-agent-rs"
 edition = "2021"
 
