@@ -27,3 +27,4 @@ tokio-util = { version = "0.7.4", features = ["codec"] }
 sysinfo = "0.27.2"
 quick-xml = { version = "0.27.1", features = ["serde", "serialize"] }
 rust-crypto = "0.2.36"
+clap = { version = "4.0.32", features = ["derive"] }

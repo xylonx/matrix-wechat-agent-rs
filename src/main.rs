@@ -1,5 +1,8 @@
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{http::Request, Message},
+};
 
 use futures_util::{future, pin_mut};
 use log::{error, info};
@@ -9,19 +12,36 @@ use matrix_wechat_agent::{
 };
 use tokio::sync::mpsc;
 
+use clap::Parser;
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(short, long)]
+    token: String,
+    #[arg(short, long)]
+    addr: String,
+    #[arg(short, long, default_value = "23333")]
+    port: u32,
+}
+
 #[tokio::main]
 async fn main() {
     env_logger::init();
 
-    let connect_addr = String::from("ws://localhost:50000/ws");
-    let url = url::Url::parse(&connect_addr).unwrap();
-    info!("parse connect_addr[{}] successfully", connect_addr);
+    let arg = Args::parse();
+
+    let request = Request::builder()
+        .header("Authorization", format!("Basic {}", arg.token))
+        .uri(arg.addr.clone())
+        .body(())
+        .unwrap();
+    info!("construct request with addr[{}] successfully", arg.addr);
 
     let (tx, mut rx) = mpsc::channel::<String>(10);
 
-    let manager: WechatManager = manager::WechatManager::new(12, "".to_string(), tx);
+    let manager: WechatManager = manager::WechatManager::new(arg.port, "".to_string(), tx);
 
-    let (ws_stream, _) = connect_async(url).await.expect("Failed to connect");
+    let (ws_stream, _) = connect_async(request).await.expect("Failed to connect");
     info!("WebSocket handshake has been successfully completed");
 
     let (mut writer, reader) = ws_stream.split();
