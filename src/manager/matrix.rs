@@ -1,4 +1,5 @@
 use anyhow::bail;
+use log::info;
 
 use crate::{
     wechat::WechatInstance,
@@ -13,19 +14,37 @@ impl WechatManager {
     /// handle matrix events(WebsocketMatrixRequest) and send resp(WebsocketCommand) to websocket
     ///
     pub async fn handle_matrix_events(&self, msg: WebsocketMatrixRequest) -> anyhow::Result<()> {
+        let mxid = msg.mxid.clone();
+        let req_id = msg.req_id;
+        if let Err(e) = self._handle_matrix_events(msg).await {
+            self.write_command_error(mxid, req_id, e.to_string())
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn _handle_matrix_events(&self, msg: WebsocketMatrixRequest) -> anyhow::Result<()> {
         // let ins = self.get_instance_by_mxid(msg.mxid)?;
         let mxid = msg.mxid;
         let req_id = msg.req_id;
 
+        info!("recv matrix event: command type: {:?}", msg.command);
+
         match msg.command {
             CommandType::Connect => {
-                let port = self.wechat_listen_port.fetch_add(1, Ordering::SeqCst);
-                let ins = WechatInstance::new(
-                    port,
-                    self.save_path.clone(),
-                    self.message_hook_port,
-                    mxid.clone(),
-                )?;
+               let ins = match self.get_instance_by_mxid(mxid.clone()) {
+                    Ok(ins) => ins,
+                    Err(_) => {
+                        let port = self.wechat_listen_port.fetch_add(1, Ordering::SeqCst);
+                        WechatInstance::new(
+                            port,
+                            self.save_path.clone(),
+                            self.message_hook_port,
+                            mxid.clone(),
+                        )?
+                    }
+                };
                 ins.hook_wechat_message(self.save_path.clone()).await?;
                 self.store_instance(mxid.clone(), ins)?;
 
@@ -53,7 +72,7 @@ impl WechatManager {
                     mxid.clone(),
                     req_id,
                     Some(serde_json::json!({
-                        "status": self.get_instance_by_mxid(mxid)?.is_login().await?,
+                        "status": self.get_instance_by_mxid(mxid)?.is_login().await.unwrap_or(false) ,
                     })),
                 )
                 .await?
@@ -66,7 +85,7 @@ impl WechatManager {
             }
 
             CommandType::GetUserInfo => match msg.data {
-                MatrixRequestDataField::Query(q) => {
+                Some(MatrixRequestDataField::Query(q)) => {
                     self.write_command_resp(
                         mxid.clone(),
                         req_id,
@@ -82,7 +101,7 @@ impl WechatManager {
             },
 
             CommandType::GetGroupInfo => match msg.data {
-                MatrixRequestDataField::Query(q) => {
+                Some(MatrixRequestDataField::Query(q)) => {
                     self.write_command_resp(
                         mxid.clone(),
                         req_id,
@@ -98,7 +117,7 @@ impl WechatManager {
             },
 
             CommandType::GetGroupMembers => match msg.data {
-                MatrixRequestDataField::Query(q) => {
+                Some(MatrixRequestDataField::Query(q)) => {
                     self.write_command_resp(
                         mxid.clone(),
                         req_id,
@@ -114,7 +133,7 @@ impl WechatManager {
             },
 
             CommandType::GetGroupMemberNickname => match msg.data {
-                MatrixRequestDataField::Query(q) => {
+                Some(MatrixRequestDataField::Query(q)) => {
                     self.write_command_resp(
                         mxid.clone(),
                         req_id,
@@ -148,7 +167,7 @@ impl WechatManager {
             }
 
             CommandType::SendMessage => match msg.data {
-                MatrixRequestDataField::Message(msg) => {
+                Some(MatrixRequestDataField::Message(msg)) => {
                     self.write_command_resp(
                         mxid.clone(),
                         req_id,
@@ -157,7 +176,7 @@ impl WechatManager {
                     .await?
                 }
 
-                MatrixRequestDataField::Query(_) => bail!("deserialize matrix message failed"),
+                _ => bail!("deserialize matrix message failed"),
             },
 
             _ => bail!("deserialize matrix message failed"),
