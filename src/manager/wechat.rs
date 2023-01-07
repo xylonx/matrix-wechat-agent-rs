@@ -300,10 +300,15 @@ impl WechatManager {
         }
 
         let mentions: Mentions = quick_xml::de::from_reader(extra.as_bytes())?;
-        let mentions = mentions.at_user_list.unwrap_or("".to_string());
+        let mentions = mentions.at_user_list;
+
+        if mentions.is_none() {
+            return Ok(Option::<MatrixMessageDataField>::None);
+        }
 
         Ok(Some(MatrixMessageDataField::Mentions(
             mentions
+                .unwrap()
                 .trim()
                 .split(",")
                 .map(|x| x.to_string())
