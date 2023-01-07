@@ -3,7 +3,7 @@ use crate::ws::{MatrixMessageDataBlob, MatrixMessageDataField, MatrixMessageData
 use anyhow::bail;
 use chrono::Utc;
 use futures_util::StreamExt;
-use log::{error, info};
+use log::{error, info, trace};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -24,6 +24,10 @@ impl WechatManager {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", self.message_hook_port))
             .await
             .expect(format!("bind to port[{}] failed", self.message_hook_port).as_str());
+        info!(
+            "start listen tcp at {} to recv wechat callback event successfully",
+            self.message_hook_port
+        );
         loop {
             let (stream, _) = listener.accept().await.unwrap();
             let local_self = self.clone();
@@ -41,7 +45,21 @@ impl WechatManager {
         loop {
             match lines.next().await {
                 Some(Ok(line)) => {
-                    let msg = serde_json::from_str::<WechatMessage>(line.as_str()).unwrap();
+                    trace!("recv a new wechat callback event: {}", line);
+                    let msg = match serde_json::from_str::<WechatMessage>(line.as_str()) {
+                        Ok(m) => {
+                            info!(
+                                "parse wechat callback event successfully. pid = {} msg_id = {}",
+                                m.pid, m.message_id
+                            );
+                            m
+                        }
+                        Err(e) => {
+                            error!("parse wechat callback message failed: {}", e);
+                            continue;
+                        }
+                    };
+
                     if let Err(e) = self.handle_wechat_callback(msg).await {
                         error!("handle wechat callback failed: {}", e);
                         err_cnt += 1;
@@ -65,9 +83,17 @@ impl WechatManager {
     }
 
     async fn handle_wechat_callback(&self, msg: WechatMessage) -> anyhow::Result<()> {
-        // deduplicate message by msg_id
+        // TODO(xylonx): deduplicate message by msg_id
 
-        let ins = self.get_instance_by_pid(msg.pid).unwrap();
+        if matches!(msg.is_send_by_phone, Some(0))
+            && !matches!(msg.msg_type, WechatMessageType::Revoke)
+        {
+            info!("duplicated message. msg_id = {}", msg.message_id);
+            return Ok(());
+        }
+
+        let ins = self.get_instance_by_pid(msg.pid)?;
+
         let mut base = WebsocketEventBase {
             mxid: ins.mxid.clone(),
             id: msg.message_id,
@@ -230,7 +256,10 @@ impl WechatManager {
             },
 
             WechatMessageType::System => match msg.sender == "weixin" || msg.is_send_message == 1 {
-                true => info!("skip wechat system message msg_id: {}", msg.message_id),
+                true => {
+                    info!("skip wechat system message msg_id: {}", msg.message_id);
+                    return Ok(());
+                }
                 false => match self.parse_system_message(msg.message).await {
                     Ok(status) => {
                         event.base.event_type = EventType::System;
@@ -260,7 +289,7 @@ impl WechatManager {
         #[derive(serde::Deserialize)]
         struct Mentions {
             #[serde(rename = "atuserlist")]
-            at_user_list: String,
+            at_user_list: Option<String>,
         }
 
         if extra.len() == 0 {
@@ -268,13 +297,11 @@ impl WechatManager {
         }
 
         let mentions: Mentions = quick_xml::de::from_reader(extra.as_bytes())?;
-        let mentions = mentions.at_user_list.trim();
-        if mentions.len() == 0 {
-            return Ok(None);
-        }
+        let mentions = mentions.at_user_list.unwrap_or("".to_string());
 
         Ok(Some(MatrixMessageDataField::Mentions(
             mentions
+                .trim()
                 .split(",")
                 .map(|x| x.to_string())
                 .collect::<Vec<String>>(),
