@@ -242,7 +242,10 @@ impl WechatManager {
                 }
             },
 
-            WechatMessageType::LastMessage => info!("recv last wechat message"),
+            WechatMessageType::LastMessage => {
+                info!("recv last wechat message");
+                return Ok(());
+            }
 
             WechatMessageType::Revoke => match self.parse_revoke(msg.message).await {
                 Ok(status) => {
