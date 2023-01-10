@@ -32,10 +32,10 @@ pub struct WechatInstance {
 impl Clone for WechatInstance {
     fn clone(&self) -> Self {
         Self {
-            port: self.port.clone(),
-            message_hook_port: self.message_hook_port.clone(),
+            port: self.port,
+            message_hook_port: self.message_hook_port,
             save_path: self.save_path.clone(),
-            pid: self.pid.clone(),
+            pid: self.pid,
             client: self.client.clone(),
             mxid: self.mxid.clone(),
         }
@@ -135,15 +135,13 @@ impl WechatInstance {
         msg_type: u32,
         body: TReq,
     ) -> Result<Bytes, reqwest::Error> {
-        Ok(self
-            .client
+        self.client
             .post(wechat_api(self.port, msg_type))
-            // .body(body)
             .json(&body)
             .send()
             .await?
             .bytes()
-            .await?)
+            .await
     }
 
     async fn wechat_hook_post<TReq: Serialize, TResp: DeserializeOwned>(
@@ -151,14 +149,13 @@ impl WechatInstance {
         msg_type: u32,
         body: TReq,
     ) -> Result<TResp, reqwest::Error> {
-        Ok(self
-            .client
+        self.client
             .post(wechat_api(self.port, msg_type))
             .json(&body)
             .send()
             .await?
             .json()
-            .await?)
+            .await
     }
 }
 
@@ -307,7 +304,7 @@ impl WechatInstance {
         self.get_contacts(
             constants::DB_MICRO_MSG.to_string(),
             String::from("SELECT c.UserName, c.NickName, i.bigHeadImgUrl, i.smallHeadImgUrl, c.Remark FROM Contact AS c LEFT JOIN ContactHeadImgUrl AS i ON c.UserName = i.usrName"),
-            filter_id.and_then(|id| Some(format!("WHERE c.UserName=\"{}\"", id))),
+            filter_id.map(|id| format!("WHERE c.UserName=\"{}\"", id)),
         )
         .await
     }
@@ -319,7 +316,7 @@ impl WechatInstance {
         self.get_contacts(
             constants::DB_OPEN_IM_CONTACT.to_string(),
             String::from("SELECT UserName, NickName, BigHeadImgUrl, SmallHeadImgUrl, Remark FROM OpenIMContact"),
-            filter_id.and_then(|id| Some(format!("WHERE UserName=\"{}\"", id))),
+            filter_id.map(|id| format!("WHERE UserName=\"{}\"", id)),
         )
         .await
     }
@@ -464,7 +461,7 @@ impl WechatInstance {
                     .into_iter()
                     .filter(|contact| !contact.username.ends_with("@chatroom")),
             )
-            .map(|contact| WechatUserInfo::from(contact))
+            .map(WechatUserInfo::from)
             .collect())
     }
 }
@@ -568,7 +565,7 @@ impl WechatInstance {
             .await?
             .into_iter()
             .filter(|contact| contact.username.ends_with("@chatroom"))
-            .map(|contact| WechatGroupInfo::from(contact))
+            .map(WechatGroupInfo::from)
             .collect())
     }
 }
@@ -592,7 +589,7 @@ impl WechatInstance {
                 data: Some(MatrixMessageDataField::Mentions(mentions)),
                 ..
             } => {
-                if mentions.len() == 0 {
+                if mentions.is_empty() {
                     self.send_text(target, content).await?
                 } else {
                     self.send_at_text(target, content, mentions).await?

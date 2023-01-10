@@ -11,7 +11,7 @@ use sysinfo::{ProcessExt, System, SystemExt};
 use tokio::{fs::File, time::sleep};
 
 use anyhow::bail;
-use log::{error, info, warn, debug};
+use log::{debug, error, info, warn};
 use serde::Serialize;
 use tokio::sync::broadcast::Sender;
 
@@ -86,14 +86,14 @@ pub async fn get_file_maybe_gzip_decompress(url: String) -> anyhow::Result<Vec<u
     Ok(Vec::from(resp.bytes().await?))
 }
 
-pub fn calculate_md5(blob: &Vec<u8>) -> String {
+pub fn calculate_md5(blob: &[u8]) -> String {
     let mut hasher = Md5::new();
     hasher.input(blob);
     let mut output = [0; 16]; // An MD5 is 16 bytes
     hasher.result(&mut output);
     output
         .into_iter()
-        .map(|i| format!("{:02X}", i).to_string())
+        .map(|i| format!("{:02X}", i))
         .collect::<Vec<String>>()
         .join("")
 }

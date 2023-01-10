@@ -22,7 +22,7 @@ impl WechatManager {
     pub async fn start_server(&self) {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", self.message_hook_port))
             .await
-            .expect(format!("bind to port[{}] failed", self.message_hook_port).as_str());
+            .unwrap_or_else(|_| panic!("bind to port[{}] failed", self.message_hook_port));
         info!(
             "start listen tcp at {} to recv wechat callback event successfully",
             self.message_hook_port
@@ -201,7 +201,7 @@ impl WechatManager {
                 },
                 Ok(EnumAppMessage::Reply(r)) => {
                     event.base.content = r.content;
-                    let sender = r.chat_sender.or_else(|| r.user_sender);
+                    let sender = r.chat_sender.or(r.user_sender);
                     if sender.is_none() {
                         bail!("cannot find sender. msg_id: {}", msg.message_id)
                     }
@@ -288,7 +288,7 @@ impl WechatManager {
             at_user_list: Option<String>,
         }
 
-        if extra.len() == 0 {
+        if extra.is_empty() {
             bail!("no data in extra info")
         }
 
@@ -303,7 +303,7 @@ impl WechatManager {
             mentions
                 .unwrap()
                 .trim()
-                .split(",")
+                .split(',')
                 .map(|x| x.to_string())
                 .collect::<Vec<String>>(),
         )))
@@ -354,13 +354,13 @@ impl WechatManager {
             client_message_id: String,
         }
 
-        if msg.len() == 0 {
+        if msg.is_empty() {
             bail!("no data in extra info")
         }
 
         let msg: Message = quick_xml::de::from_reader(msg.as_bytes())?;
 
-        let voice_path = String::from(msg.message.client_message_id);
+        let voice_path = msg.message.client_message_id;
         let path = Path::new(&self.save_path)
             .join(self_id)
             .join(voice_path + ".amr");
@@ -438,7 +438,7 @@ impl WechatManager {
             key: String,
         }
 
-        if msg.len() == 0 {
+        if msg.is_empty() {
             bail!("no data in extra info")
         }
 
@@ -468,7 +468,7 @@ impl WechatManager {
             label: String,
         }
 
-        if msg.len() == 0 {
+        if msg.is_empty() {
             bail!("no data in extra info")
         }
         let msg: Message = quick_xml::de::from_reader(msg.as_bytes())?;
@@ -482,7 +482,7 @@ impl WechatManager {
     }
 
     async fn parse_app(&self, msg: String) -> anyhow::Result<EnumAppMessage> {
-        if msg.len() == 0 {
+        if msg.is_empty() {
             bail!("no data in extra info")
         }
         let msg: AppMessage = quick_xml::de::from_reader(msg.as_bytes())?;
@@ -500,7 +500,7 @@ impl WechatManager {
             _ => Ok(EnumAppMessage::Link(MatrixMessageDataLink {
                 title: msg.message.title,
                 des: msg.message.des,
-                url: msg.message.url.unwrap_or("".to_string()),
+                url: msg.message.url.unwrap_or_else(|| "".to_string()),
             })),
         }
     }
@@ -530,24 +530,21 @@ impl WechatManager {
                     return Ok(String::from("VoIP: Call ended"));
                 }
                 _ => {
-                    return Ok(String::from(format!("VoIP: Unknown status: {}", status)));
+                    return Ok(format!("VoIP: Unknown status: {}", status));
                 }
             },
-            Err(_) => match quick_xml::de::from_reader(bytes) {
-                Ok(BubbleMessage {
-                    bubble: BubbleContent { msg },
-                }) => {
-                    return Ok(format!("VoIP: {}", msg));
+            Err(_) => {
+                if let Ok(BubbleMessage { bubble }) = quick_xml::de::from_reader(bytes) {
+                    return Ok(format!("VoIP: {}", bubble.msg));
                 }
-                Err(_) => {}
-            },
+            }
         };
 
         Ok("".to_string())
     }
 
     async fn parse_hint(&self, msg: String) -> anyhow::Result<String> {
-        if msg.len() == 0 {
+        if msg.is_empty() {
             bail!("no data in extra info")
         }
         Ok(quick_xml::de::from_reader(msg.as_bytes()).unwrap_or(msg))
@@ -560,7 +557,7 @@ impl WechatManager {
             msg_type: String,
         }
 
-        if msg.len() == 0 {
+        if msg.is_empty() {
             bail!("no data in extra info")
         }
         let sys_msg: Message = match quick_xml::de::from_reader(msg.as_bytes()) {

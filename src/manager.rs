@@ -45,7 +45,7 @@ impl WechatManager {
     ) -> WechatManager {
         WechatManager {
             message_hook_port: msg_hook_port,
-            save_path: save_path,
+            save_path,
             wechat_listen_port: Arc::new(AtomicU32::new(msg_hook_port + 1)),
             pid_instance_map: Arc::new(Mutex::new(HashMap::new())),
             mxid_pid_map: Arc::new(Mutex::new(HashMap::new())),
@@ -87,7 +87,7 @@ impl WechatManager {
             }
         };
 
-        let ins = self.get_instance_by_pid(pid.clone())?;
+        let ins = self.get_instance_by_pid(*pid)?;
         if !ins.is_alive()? {
             bail!("instance crashed. pid = {}", pid)
         }
@@ -129,13 +129,13 @@ impl WechatManager {
         };
 
         let pid = mxid_map.get(&mxid);
-        if let None = pid {
+        if pid.is_none() {
             bail!("get pid by mxid[{}] failed", mxid)
         }
         let pid = pid.unwrap();
 
         let ins = db.get(pid);
-        if let None = ins {
+        if ins.is_none() {
             bail!("can not get instance by pid[{}]", pid)
         }
         let ins = ins.unwrap();
