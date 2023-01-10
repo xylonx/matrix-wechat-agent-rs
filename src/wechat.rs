@@ -15,10 +15,11 @@ use crate::{
     utils,
     ws::{
         recv::{MatrixMessageType, MatrixRequestDataMessage},
-        MatrixMessageDataBlob, MatrixMessageDataField,
+        MatrixMessageDataField, MatrixMessageDataMedia,
     },
 };
 
+#[derive(Debug)]
 pub struct WechatInstance {
     pub port: u32,
     pub message_hook_port: u32,
@@ -40,36 +41,6 @@ impl Clone for WechatInstance {
         }
     }
 }
-
-// impl Drop for WechatInstance {
-//     fn drop(&mut self) {
-//         match self.is_alive() {
-//             Ok(alive) => {
-//                 if !alive {
-//                     info!("process[{}] is already dead", self.pid);
-//                     return;
-//                 }
-//             }
-//             Err(err) => {
-//                 error!("check process status failed: {}", err);
-//             }
-//         }
-//
-//         if let Err(err) = self.stop_listening() {
-//             error!("stop_listen failed: {}", err);
-//         };
-//
-//         match self.kill_self_process() {
-//             Ok(status) => match status {
-//                 true => info!("kill process[{}] successfully", self.pid),
-//                 false => error!("kill process[{}] failed", self.pid),
-//             },
-//             Err(err) => {
-//                 error!("kill process[{}] failed: {}", self.pid, err);
-//             }
-//         }
-//     }
-// }
 
 #[derive(Serialize)]
 struct WechatNilBodyReq {}
@@ -108,11 +79,11 @@ impl WechatInstance {
     ) -> anyhow::Result<WechatInstance> {
         Ok(WechatInstance {
             pid: WechatInstance::new_wechat_instance(port)?,
-            port: port,
+            port,
             message_hook_port: msg_hook_port,
             client: reqwest::Client::new(),
-            mxid: mxid,
-            save_path: save_path,
+            mxid,
+            save_path,
         })
     }
 
@@ -631,26 +602,26 @@ impl WechatInstance {
             MatrixRequestDataMessage {
                 target,
                 message_type: MatrixMessageType::Image,
-                data: Some(MatrixMessageDataField::Blob(blob)),
+                data: Some(MatrixMessageDataField::Media(media)),
                 ..
             }
             | MatrixRequestDataMessage {
                 target,
                 message_type: MatrixMessageType::Video,
-                data: Some(MatrixMessageDataField::Blob(blob)),
+                data: Some(MatrixMessageDataField::Media(media)),
                 ..
             } => {
-                let path = self.save_blob(blob).await?;
+                let path = self.save_media(media).await?;
                 self.send_image(target, path).await?;
             }
 
             MatrixRequestDataMessage {
                 target,
                 message_type: MatrixMessageType::File,
-                data: Some(MatrixMessageDataField::Blob(blob)),
+                data: Some(MatrixMessageDataField::Media(media)),
                 ..
             } => {
-                let path = self.save_blob(blob).await?;
+                let path = self.save_media(media).await?;
                 self.send_file(target, path).await?;
             }
 
@@ -659,13 +630,14 @@ impl WechatInstance {
         Ok(())
     }
 
-    async fn save_blob(&self, blob: MatrixMessageDataBlob) -> anyhow::Result<String> {
-        let filepath = match blob.name.len() {
-            0 => Path::new(&self.save_path).join(utils::calculate_md5(&blob.binary)),
-            _ => Path::new(&self.save_path).join(blob.name),
+    async fn save_media(&self, media: MatrixMessageDataMedia) -> anyhow::Result<String> {
+        let media_blob = utils::get_file_maybe_gzip_decompress(media.url).await?;
+        let filepath = match media.name.len() {
+            0 => Path::new(&self.save_path).join(utils::calculate_md5(&media_blob)),
+            _ => Path::new(&self.save_path).join(media.name),
         };
         let mut file = File::create(filepath.clone()).await?;
-        file.write_all(&blob.binary).await?;
+        file.write_all(&media_blob).await?;
         utils::get_filename(filepath.as_path())
     }
 
@@ -746,11 +718,16 @@ pub struct WechatMessage {
     pub msg_type: WechatMessageType,
     pub message: String,
     #[serde(rename = "filepath")]
+    #[serde(default = "nil_string")]
     pub file_path: String,
     pub thumb_path: String,
     // extra_info is a xml - json hybrid message
     #[serde(rename = "extrainfo")]
     pub extra_info: String,
+}
+
+fn nil_string() -> String {
+    "".to_string()
 }
 
 #[derive(Deserialize_repr, Debug)]
@@ -766,15 +743,43 @@ pub enum WechatMessageType {
     App = 49,
     PrivateVoIP = 50,
     LastMessage = 51,
-    Revoke = 10000,
+    Hint = 10000, // hint info like revoke or tickle
     System = 10002,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug)]
 pub enum WechatMessageAppType {
-    Article = 5,
     File = 6,
     Sticker = 8,
     Reply = 57,
     Notice = 87,
+    Other,
+}
+
+impl TryFrom<u32> for WechatMessageAppType {
+    type Error = ();
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            x if x == Self::File as u32 => Ok(Self::File),
+            x if x == Self::Sticker as u32 => Ok(Self::Sticker),
+            x if x == Self::Reply as u32 => Ok(Self::Reply),
+            x if x == Self::Notice as u32 => Ok(Self::Notice),
+            _ => Ok(Self::Other),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WechatMessageAppType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match u32::deserialize(deserializer)? {
+            x if x == Self::File as u32 => Self::File,
+            x if x == Self::Sticker as u32 => Self::Sticker,
+            x if x == Self::Reply as u32 => Self::Reply,
+            x if x == Self::Notice as u32 => Self::Notice,
+            _ => Self::Other,
+        })
+    }
 }

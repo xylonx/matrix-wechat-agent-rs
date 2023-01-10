@@ -52,20 +52,28 @@ pub enum MatrixMessageDataField {
         longitude: f64,
         latitude: f64,
     },
+    Media(MatrixMessageDataMedia),
     Link(MatrixMessageDataLink),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde_with::serde_as]
 pub struct MatrixMessageDataBlob {
-    pub name: String,
+    pub name: Option<String>,
     #[serde_as(as = "Bytes")]
     pub binary: Vec<u8>,
 }
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct MatrixMessageDataMedia {
+    pub name: String,
+    pub url: String,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[serde_with::serde_as]
 pub struct MatrixMessageDataLink {
     pub title: String,
-    pub desc: String,
+    pub des: String,
     pub url: String,
 }
