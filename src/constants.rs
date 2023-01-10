@@ -73,7 +73,8 @@ pub const WECHAT_MSG_SEND_XML: u32 = 43; // 发送xml消息
 pub const WECHAT_LOGOUT: u32 = 44; // 退出登录
 pub const WECHAT_GET_TRANSFER: u32 = 45; // 收款
 
-pub const DEFAULT_RETRY_TIME: u8 = 3;
-pub const MAX_FAIL_COUNT: u8 = 0;
+pub const DEFAULT_WRITE_WS_RETRY_TIME: u8 = 3;
+pub const MAX_WECHAT_CALLBACK_FAIL_COUNT: u8 = 0;
+pub const MAX_WS_RECONNECT_COUNT: u32 = 5;
 
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36 Edg/87.0.664.66";
