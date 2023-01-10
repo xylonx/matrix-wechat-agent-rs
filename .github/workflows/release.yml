@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lints:
+    name: Lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v1
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+      - name: Setup cargo-hack
+        run: cargo install cargo-hack
+      - name: Check all features
+        run: cargo hack check --feature-powerset --no-dev-deps
+
+  build:
+    name: Build for ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            exe: matrix_wechat_agent.exe
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+      - name: Install cross
+        run: cargo install --version 0.1.16 cross
+      - name: Run tests
+        run: cross test --release --target ${{ matrix.target }} --verbose
+      - name: Build release
+        run: cross build --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v2
+        with:
+          name: matrix_wechat_agent-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.exe }}
+      - name: Zip Release
+        uses: TheDoctor0/zip-release@0.6.1
+        with:
+          type: zip
+          filename: matrix_wechat_agent-${{ matrix.target }}.zip
+          directory: target/${{ matrix.target }}/release/
+          path: ${{ matrix.exe }}
+      - name: Publish
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: target/${{ matrix.target }}/release/matrix_wechat_agent-${{ matrix.target }}.zip
+          generate_release_notes: true
+          draft: true
