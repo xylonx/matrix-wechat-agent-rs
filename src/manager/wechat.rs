@@ -500,7 +500,7 @@ impl WechatManager {
             _ => Ok(EnumAppMessage::Link(MatrixMessageDataLink {
                 title: msg.message.title,
                 des: msg.message.des,
-                url: msg.message.url.unwrap_or_else(|| "".to_string()),
+                url: msg.message.url.unwrap_or_default(),
             })),
         }
     }
