@@ -3,8 +3,7 @@ use crate::ws::{MatrixMessageDataBlob, MatrixMessageDataField, MatrixMessageData
 use anyhow::bail;
 use chrono::Utc;
 use futures_util::StreamExt;
-use log::{error, info, trace};
-use tokio::fs::File;
+use log::{debug, error, info, warn};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{Framed, LinesCodec};
@@ -45,7 +44,7 @@ impl WechatManager {
         loop {
             match lines.next().await {
                 Some(Ok(line)) => {
-                    trace!("recv a new wechat callback event: {}", line);
+                    debug!("recv a new wechat callback event: {}", line);
                     let msg = match serde_json::from_str::<WechatMessage>(line.as_str()) {
                         Ok(m) => {
                             info!(
@@ -65,15 +64,17 @@ impl WechatManager {
                         err_cnt += 1;
                     };
 
-                    if err_cnt > constants::MAX_FAIL_COUNT {
+                    if err_cnt > constants::MAX_WECHAT_CALLBACK_FAIL_COUNT {
                         bail!(
                             "handle wechat callback failed: failure time exceeds {} the max failure time: {}",
                             err_cnt,
-                            constants::MAX_FAIL_COUNT
+                            constants::MAX_WECHAT_CALLBACK_FAIL_COUNT
                         )
                     }
                 }
-                Some(Err(_)) => todo!(),
+                Some(Err(e)) => {
+                    error!("recv a new wechat callback line failed: {}", e);
+                }
                 // The stream has been exhausted.
                 None => break,
             }
@@ -86,7 +87,7 @@ impl WechatManager {
         // TODO(xylonx): deduplicate message by msg_id
 
         if matches!(msg.is_send_by_phone, Some(0))
-            && !matches!(msg.msg_type, WechatMessageType::Revoke)
+            && !matches!(msg.msg_type, WechatMessageType::Hint)
         {
             info!("duplicated message. msg_id = {}", msg.message_id);
             return Ok(());
@@ -102,7 +103,7 @@ impl WechatManager {
             sender: msg.self_id.clone(),
             target: msg.sender.clone(),
             content: msg.message.clone(),
-            replay: None,
+            reply: None,
         };
 
         if msg.is_send_message == 0 {
@@ -120,6 +121,7 @@ impl WechatManager {
                 event.extra = self.get_mentions(msg.extra_info).await?;
             }
 
+            // TODO(xylonx): upload media to matrix in place instead of sending blob to ws to avoid high-traffic problem
             WechatMessageType::Image => match self.fetch_image(msg.self_id, msg.file_path).await {
                 Ok(blob) => {
                     event.base.event_type = EventType::Image;
@@ -203,7 +205,7 @@ impl WechatManager {
                     if sender.is_none() {
                         bail!("cannot find sender. msg_id: {}", msg.message_id)
                     }
-                    event.base.replay = Some(ReplyInfo {
+                    event.base.reply = Some(ReplyInfo {
                         id: r.refer_msg_id,
                         sender: sender.unwrap(),
                     })
@@ -215,15 +217,6 @@ impl WechatManager {
                 Ok(EnumAppMessage::Link(l)) => {
                     event.base.event_type = EventType::App;
                     event.extra = Some(MatrixMessageDataField::Link(l));
-                }
-                Ok(EnumAppMessage::Article(a)) => {
-                    event.base.content = format!(
-                        "#{}\nauthor: {}\n{}\n\n{}",
-                        a.category.item.title,
-                        a.category.name,
-                        a.category.item.summary,
-                        a.category.item.digest
-                    );
                 }
                 _ => {
                     error!("parse app failed. msg_id: {}", msg.message_id);
@@ -247,7 +240,7 @@ impl WechatManager {
                 return Ok(());
             }
 
-            WechatMessageType::Revoke => match self.parse_revoke(msg.message).await {
+            WechatMessageType::Hint => match self.parse_hint(msg.message).await {
                 Ok(status) => {
                     event.base.event_type = EventType::Revoke;
                     event.base.content = status;
@@ -324,45 +317,23 @@ impl WechatManager {
         let path = Path::new(&file_path);
         let filename = utils::get_filename(path)?;
 
-        let file_ext = match path.extension() {
-            Some(fe) => match fe.to_str() {
-                Some(f) => f.to_string(),
-                None => {
-                    bail!("file_path[{}] contains invalid UTF8 char", file_path)
-                }
-            },
-            None => "".to_string(),
-        };
-
         let base_image = Path::new(&self.save_path)
             .join(self_id)
-            .join(filename.clone())
-            .join(file_ext)
-            .display()
-            .to_string();
-        let png_image = base_image.clone() + ".png";
-        let gif_image = base_image.clone() + ".gif";
-        let jpg_image = base_image.clone() + ".jpg";
+            .join(filename.clone());
+        let png_image = base_image.clone().with_extension("png");
+        let gif_image = base_image.clone().with_extension("gif");
+        let jpg_image = base_image.clone().with_extension("jpg");
 
-        let mut file: File;
-        if let Ok(f) = File::open(base_image).await {
-            file = f;
-        } else if let Ok(f) = File::open(png_image).await {
-            file = f;
-        } else if let Ok(f) = File::open(gif_image).await {
-            file = f;
-        } else if let Ok(f) = File::open(jpg_image).await {
-            file = f;
-        } else {
-            bail!("image file {} not found", file_path)
-        }
+        // retry 3 times to wait wechat hook
+        let mut file =
+            utils::retriable_open_file(vec![base_image, png_image, gif_image, jpg_image], 3)
+                .await?;
 
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).await?;
-        // image_path.exists();
 
         Ok(MatrixMessageDataField::Blob(MatrixMessageDataBlob {
-            name: filename,
+            name: Some(filename),
             binary: buffer,
         }))
     }
@@ -398,12 +369,12 @@ impl WechatManager {
             bail!("voice file {} not found", path.display())
         }
 
-        let mut file = File::open(path).await?;
+        let mut file = utils::retriable_open_file(vec![path], 3).await?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).await?;
 
         Ok(MatrixMessageDataField::Blob(MatrixMessageDataBlob {
-            name: filename,
+            name: Some(filename),
             binary: buffer,
         }))
     }
@@ -414,10 +385,10 @@ impl WechatManager {
         thumbnail: String,
     ) -> anyhow::Result<MatrixMessageDataField> {
         let path = match file_path.len() {
-            0 => Path::new(&self.save_path)
+            0 => utils::get_wechat_document_dir()?
                 .join(thumbnail)
                 .with_extension("mp4"),
-            _ => Path::new(&self.save_path).join(file_path),
+            _ => utils::get_wechat_document_dir()?.join(file_path),
         };
         let filename = utils::get_filename(path.as_path())?;
 
@@ -425,30 +396,30 @@ impl WechatManager {
             bail!("video file {} not found", path.display())
         }
 
-        let mut file = File::open(path).await?;
+        let mut file = utils::retriable_open_file(vec![path], 3).await?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).await?;
 
         Ok(MatrixMessageDataField::Blob(MatrixMessageDataBlob {
-            name: filename,
+            name: Some(filename),
             binary: buffer,
         }))
     }
 
     async fn fetch_file(&self, file_path: String) -> anyhow::Result<MatrixMessageDataField> {
-        let path = Path::new(&self.save_path).join(file_path);
+        let path = utils::get_wechat_document_dir()?.join(file_path);
         let filename = utils::get_filename(path.as_path())?;
 
         if !path.exists() {
             bail!("file {} not found", path.display())
         }
 
-        let mut file = File::open(path).await?;
+        let mut file = utils::retriable_open_file(vec![path], 3).await?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).await?;
 
         Ok(MatrixMessageDataField::Blob(MatrixMessageDataBlob {
-            name: filename,
+            name: Some(filename),
             binary: buffer,
         }))
     }
@@ -474,7 +445,7 @@ impl WechatManager {
         let msg: Message = quick_xml::de::from_reader(msg.as_bytes())?;
 
         Ok(MatrixMessageDataField::Blob(MatrixMessageDataBlob {
-            name: msg.message.key,
+            name: Some(msg.message.key),
             binary: utils::get_file_maybe_gzip_decompress(msg.message.cnd_url).await?,
         }))
     }
@@ -516,9 +487,6 @@ impl WechatManager {
         }
         let msg: AppMessage = quick_xml::de::from_reader(msg.as_bytes())?;
         match msg.message.message_type {
-            WechatMessageAppType::Article if msg.message.article.is_some() => {
-                Ok(EnumAppMessage::Article(msg.message.article.unwrap()))
-            }
             WechatMessageAppType::File => Ok(EnumAppMessage::File),
             WechatMessageAppType::Sticker => Ok(EnumAppMessage::Sticker),
             WechatMessageAppType::Reply if msg.message.reply.is_some() => {
@@ -531,49 +499,83 @@ impl WechatManager {
             ),
             _ => Ok(EnumAppMessage::Link(MatrixMessageDataLink {
                 title: msg.message.title,
-                desc: msg.message.des,
-                url: msg.message.url,
+                des: msg.message.des,
+                url: msg.message.url.unwrap_or("".to_string()),
             })),
         }
     }
 
-    // TODO(xylonx): parse message and extract voip detail status from it
-    async fn parse_private_voip(&self, _: String) -> anyhow::Result<String> {
-        Ok("private voip".to_string())
+    async fn parse_private_voip(&self, msg: String) -> anyhow::Result<String> {
+        #[derive(serde::Deserialize, Debug)]
+        struct InviteMessage {
+            status: u32,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct BubbleMessage {
+            #[serde(rename = "VoIPBubbleMsg")]
+            bubble: BubbleContent,
+        }
+        #[derive(serde::Deserialize, Debug)]
+        struct BubbleContent {
+            msg: String,
+        }
+
+        let bytes = msg.as_bytes();
+        match quick_xml::de::from_reader(bytes) {
+            Ok(InviteMessage { status }) => match status {
+                1 => {
+                    return Ok(String::from("VoIP: Started a call"));
+                }
+                2 => {
+                    return Ok(String::from("VoIP: Call ended"));
+                }
+                _ => {
+                    return Ok(String::from(format!("VoIP: Unknown status: {}", status)));
+                }
+            },
+            Err(_) => match quick_xml::de::from_reader(bytes) {
+                Ok(BubbleMessage {
+                    bubble: BubbleContent { msg },
+                }) => {
+                    return Ok(format!("VoIP: {}", msg));
+                }
+                Err(_) => {}
+            },
+        };
+
+        Ok("".to_string())
     }
 
-    async fn parse_revoke(&self, msg: String) -> anyhow::Result<String> {
+    async fn parse_hint(&self, msg: String) -> anyhow::Result<String> {
         if msg.len() == 0 {
             bail!("no data in extra info")
         }
-        Ok(quick_xml::de::from_reader(msg.as_bytes())?)
+        Ok(quick_xml::de::from_reader(msg.as_bytes()).unwrap_or(msg))
     }
 
     async fn parse_system_message(&self, msg: String) -> anyhow::Result<String> {
         #[derive(serde::Deserialize)]
         struct Message {
-            #[serde(rename = "voipmt")]
-            message: VoIPMessage,
-        }
-        #[derive(serde::Deserialize)]
-        struct VoIPMessage {
-            #[serde(rename = "invite")]
-            invite: Option<String>,
-            #[serde(rename = "banner")]
-            banner: Option<String>,
+            #[serde(rename = "@type")]
+            msg_type: String,
         }
 
         if msg.len() == 0 {
             bail!("no data in extra info")
         }
-        let msg: Message = quick_xml::de::from_reader(msg.as_bytes())?;
+        let sys_msg: Message = match quick_xml::de::from_reader(msg.as_bytes()) {
+            Ok(m) => m,
+            Err(_) => {
+                warn!("unknown system message: {}", msg);
+                return Ok("".to_string());
+            }
+        };
 
-        Ok(msg
-            .message
-            .invite
-            .or(msg.message.banner)
-            .map(|status| format!("VoIP: {}", status))
-            .unwrap_or("".to_string()))
+        match sys_msg.msg_type.as_str() {
+            // tickle and revoke hint will be resend by Hint, therefore, ignore it in sysmsg block
+            "pat" | "revokemsg" => Ok("".to_string()),
+            _ => Ok(msg),
+        }
     }
 }
 
@@ -588,7 +590,6 @@ struct AppMessage {
 enum EnumAppMessage {
     File,
     Sticker,
-    Article(AppArticle),
     Announcement(String),
     Reply(AppReply),
     Link(MatrixMessageDataLink),
@@ -601,33 +602,14 @@ struct AppMessageContent {
     message_type: WechatMessageAppType,
 
     title: String,
-    url: String,
+    url: Option<String>, // just for reply type, url is None
     des: String,
-
-    #[serde(rename = "mmreader")]
-    article: Option<AppArticle>,
 
     #[serde(rename = "textannouncement")]
     announcement: Option<String>,
 
     #[serde(rename = "refermsg")]
     reply: Option<AppReply>,
-}
-
-#[derive(serde::Deserialize)]
-struct AppArticle {
-    category: AppArticleCategory,
-}
-#[derive(serde::Deserialize)]
-struct AppArticleCategory {
-    name: String,
-    item: AppArticleCategoryItem,
-}
-#[derive(serde::Deserialize)]
-struct AppArticleCategoryItem {
-    title: String,
-    digest: String,
-    summary: String,
 }
 
 #[derive(serde::Deserialize)]

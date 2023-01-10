@@ -54,7 +54,7 @@ pub struct WebsocketEventBase {
     pub sender: String,
     pub target: String,
     pub content: String,
-    pub replay: Option<ReplyInfo>,
+    pub reply: Option<ReplyInfo>,
 }
 
 #[derive(serde::Serialize)]
