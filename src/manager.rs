@@ -1,13 +1,13 @@
 use crate::wechat::WechatInstance;
 use crate::ws::send::{WebsocketCommand, WebsocketMessage};
 use anyhow::bail;
-use log::trace;
+use log::debug;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::broadcast::Sender;
 
 use crate::utils;
 use crate::ws::{send::WebsocketEvent, CommandType};
@@ -21,7 +21,7 @@ pub struct WechatManager {
     wechat_listen_port: Arc<AtomicU32>,
     pid_instance_map: Arc<Mutex<HashMap<u32, WechatInstance>>>,
     mxid_pid_map: Arc<Mutex<HashMap<String, u32>>>,
-    sender_chan: mpsc::Sender<String>,
+    sender_chan: Sender<String>,
 }
 
 impl Clone for WechatManager {
@@ -41,7 +41,7 @@ impl WechatManager {
     pub fn new(
         msg_hook_port: u32,
         save_path: String,
-        sender_chan: mpsc::Sender<String>,
+        sender_chan: Sender<String>,
     ) -> WechatManager {
         WechatManager {
             message_hook_port: msg_hook_port,
@@ -87,7 +87,11 @@ impl WechatManager {
             }
         };
 
-        self.get_instance_by_pid(pid.clone())
+        let ins = self.get_instance_by_pid(pid.clone())?;
+        if !ins.is_alive()? {
+            bail!("instance crashed. pid = {}", pid)
+        }
+        Ok(ins)
     }
 
     fn store_instance(&self, mxid: String, instance: WechatInstance) -> anyhow::Result<()> {
@@ -130,6 +134,15 @@ impl WechatManager {
         }
         let pid = pid.unwrap();
 
+        let ins = db.get(pid);
+        if let None = ins {
+            bail!("can not get instance by pid[{}]", pid)
+        }
+        let ins = ins.unwrap();
+
+        // kill old instance process
+        ins.kill_self_process()?;
+
         db.remove(pid);
         mxid_map.remove(&mxid);
 
@@ -160,7 +173,7 @@ impl WechatManager {
             command: CommandType::Response,
             data,
         };
-        trace!("write command to ws channel: {:?}", cmd);
+        debug!("write command to ws channel: {:?}", cmd);
         let resp = self.write_to_ws(WebsocketMessage::Command(cmd)).await;
         if let Err(e) = resp {
             self.write_command_error(mxid, req_id, e.to_string())
