@@ -1,6 +1,6 @@
 [package]
 name = "matrix_wechat_agent"
-version = "0.1.1"
+version = "0.1.2"
 repository = "github.com/xylonx/matrix-wechat-agent-rs"
 edition = "2021"
 
@@ -8,13 +8,12 @@ edition = "2021"
 
 
 [dependencies]
-tokio = { version = "1.23.0", features = ["full"] }
+tokio = { version = "1.24.1", features = ["full"] }
 reqwest = { version = "0.11", features = ["json", "gzip"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 libloading = "0.7"
 serde = { version = "1.0.151", features = ["derive"] }
 log = "0.4.17"
-env_logger = "0.10.0"
 tokio-tungstenite = { version = "0.18.0", features = ["native-tls"] }
 url = "2.3.1"
 futures-util = "0.3.25"
@@ -29,3 +28,8 @@ quick-xml = { version = "0.27.1", features = ["serde", "serialize"] }
 rust-crypto = "0.2.36"
 clap = { version = "4.0.32", features = ["derive"] }
 serde_repr = "0.1.10"
+log4rs = "1.2.0"
+dirs = "4.0.0"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.10.1"
