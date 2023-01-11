@@ -630,12 +630,19 @@ impl WechatInstance {
     async fn save_media(&self, media: MatrixMessageDataMedia) -> anyhow::Result<String> {
         let media_blob = utils::get_file_maybe_gzip_decompress(media.url).await?;
         let filepath = match media.name.len() {
-            0 => Path::new(&self.save_path).join(utils::calculate_md5(&media_blob)),
-            _ => Path::new(&self.save_path).join(media.name),
+            0 => Path::new(&self.save_path)
+                .join("matrix_media")
+                .join(utils::calculate_md5(&media_blob)),
+            _ => Path::new(&self.save_path)
+                .join("matrix_media")
+                .join(media.name),
         };
         let mut file = File::create(filepath.clone()).await?;
         file.write_all(&media_blob).await?;
-        utils::get_filename(filepath.as_path())
+        match filepath.into_os_string().into_string() {
+            Ok(p) => Ok(p),
+            Err(e) => bail!("convert filepath {:?} failed", e),
+        }
     }
 
     pub async fn send_text(&self, recv_wechat_id: String, msg: String) -> anyhow::Result<()> {
