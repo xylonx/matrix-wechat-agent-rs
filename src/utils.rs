@@ -24,12 +24,12 @@ pub async fn retriable_write<T: Serialize>(
 ) -> anyhow::Result<()> {
     let retry_time = retry_time.unwrap_or(constants::DEFAULT_WRITE_WS_RETRY_TIME);
     let data = serde_json::to_string(&data)?;
-    debug!("write message to ws: {}", data);
+    debug!("write message to channel: {}", data);
     for _ in 0..retry_time {
         match writer.send(data.clone()) {
             Ok(_) => break,
             Err(e) => {
-                error!("send message to ws failed: {}", e);
+                error!("send message to channel failed: {}", e);
             }
         };
     }

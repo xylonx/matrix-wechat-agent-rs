@@ -152,13 +152,13 @@ impl WechatManager {
 
 // utils methods
 impl WechatManager {
-    async fn write_to_ws<T: Serialize>(&self, data: T) -> anyhow::Result<()> {
+    async fn write_to_sender<T: Serialize>(&self, data: T) -> anyhow::Result<()> {
         let writer = self.sender_chan.clone();
         utils::retriable_write(writer, data, None).await
     }
 
     async fn write_event_resp<T: Serialize>(&self, event: WebsocketEvent<T>) -> anyhow::Result<()> {
-        self.write_to_ws(event).await
+        self.write_to_sender(event).await
     }
 
     async fn write_command_resp<T: Serialize + Debug>(
@@ -174,7 +174,7 @@ impl WechatManager {
             data,
         };
         debug!("write command to ws channel: {:?}", cmd);
-        let resp = self.write_to_ws(WebsocketMessage::Command(cmd)).await;
+        let resp = self.write_to_sender(WebsocketMessage::Command(cmd)).await;
         if let Err(e) = resp {
             self.write_command_error(mxid, req_id, e.to_string())
                 .await?
@@ -188,7 +188,7 @@ impl WechatManager {
         req_id: i32,
         message: String,
     ) -> anyhow::Result<()> {
-        self.write_to_ws(WebsocketMessage::Command(WebsocketCommand {
+        self.write_to_sender(WebsocketMessage::Command(WebsocketCommand {
             mxid,
             req_id,
             command: CommandType::Error,
